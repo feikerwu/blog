@@ -1,4 +1,5 @@
 module.exports = {
+  pathPrefix: '/blog',
   siteMetadata: {
     title: `feiker的小站`,
     author: `Kyle Mathews`,
