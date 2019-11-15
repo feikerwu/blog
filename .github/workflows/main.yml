@@ -1,14 +1,17 @@
-name: deploy-blog
+name: Blog Publish
 
-on: [push]
+on:
+  push:
+    branches:
+      - master
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
-    - name: Run a one-line script
-      run: yarn deploy
-
-        
+      - uses: actions/checkout@v1
+      - uses: enriikke/gatsby-gh-pages-action@v2
+        with:
+          access-token: ${{ secrets.actionToken }}
+          deploy-branch: gh-pages
+          gatsby-args: --prefix-paths
