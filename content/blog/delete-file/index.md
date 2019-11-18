@@ -14,8 +14,12 @@ description: 删除文件是否需要对该文件具有写权限，为什么？
 ##### bash 验证
 
 ```bash
-mkdir a && touch a/b  #新建a目录，a下有b文件
-chmod -w a && rm a/b  #去掉a的写权限，尝试去删除a/b，报 rm: a/b: Permission denied，说明删除文件需要文件所在目录有写权限
-chmod +w a && chmod -w a/b && rm a/b #恢复a写权限，去掉b写权限，尝试去删除b, 删除成功，说明删除文件不需要写权限
-touch b && chmod -x a && rm a/b #去掉a的执行权限 报rm: a/b: Permission denied，说明删除文件需要目录的执行权限
+#新建a目录，a下有b文件
+mkdir a && touch a/b
+ #去掉a的写权限，尝试去删除a/b，报 rm: a/b: Permission denied，说明删除文件需要文件所在目录有写权限
+chmod -w a && rm a/b
+#恢复a写权限，去掉b写权限，尝试去删除b, 删除成功，说明删除文件不需要写权限
+chmod +w a && chmod -w a/b && rm a/b
+#去掉a的执行权限 报rm: a/b: Permission denied，说明删除文件需要目录的执行权限
+touch b && chmod -x a && rm a/b
 ```

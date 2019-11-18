@@ -1,6 +1,6 @@
 ---
 title: vue.nextTick 原理解析
-date: "2019-11-13"
+date: '2019-11-13'
 description: vue.nextTick有什么作用，以及其实现原理
 ---
 
@@ -42,7 +42,7 @@ Vue 2.0 的源码见这 [nextTick 源码 ](https://github.com/vuejs/vue/blob/dev
 ```js
 const nextTick = cb => {
   const queueMicrotask =
-    typeof queueMicrotask === "function"
+    typeof queueMicrotask === 'function'
       ? queueMicrotask
       : Promise && (cb => Promise.resolve().then(cb))
       ? setImmediate && (cb => setImmediate(cb))
