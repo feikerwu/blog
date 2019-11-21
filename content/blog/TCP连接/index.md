@@ -24,7 +24,7 @@ TCP 协议的运行可划分为三个阶段：连接创建(_connection establish
 
 以下是 TCP 连接的具体流程，
 
-![](https://www.tcpipguide.com/free/diagrams/tcpopen3way.png)
+![](http://www.tcpipguide.com/free/diagrams/tcpopen3way.png)
 
 1. 客户端 client 向服务端 server 发送一个 SYN(synchronize)报，包上带随机序号 A
 2. server 接收到 client 的 SYN 初始化包之后，回复一个 SYN/ACK 包，ACK 包上带上序号 A+1，表示我正确收到了这个客户端 client 的消息，同时自己的 SYN 上带上随机序号 B

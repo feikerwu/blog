@@ -46,8 +46,8 @@ module.exports = {
         ]
       }
     },
-    `gatsby-transformer-sharp`,
-    `gatsby-plugin-sharp`,
+    `gatsby-transformer-sharp`, // 将图片压缩后的数据写到graphql
+    `gatsby-plugin-sharp`, // 用于图片压缩
     {
       resolve: `gatsby-plugin-google-analytics`,
       options: {
@@ -56,10 +56,10 @@ module.exports = {
     },
     `gatsby-plugin-feed`,
     {
-      resolve: `gatsby-plugin-manifest`,
+      resolve: `gatsby-plugin-manifest`, // 用于PWA
       options: {
-        name: `Gatsby Starter Blog`,
-        short_name: `GatsbyJS`,
+        name: `feiker's Blog`,
+        short_name: `feiker's Blog`,
         start_url: `/`,
         background_color: `#ffffff`,
         theme_color: `#663399`,
