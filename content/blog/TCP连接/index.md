@@ -1,6 +1,6 @@
 ---
 title: tcp三次握手
-date: '2019-11-13'
+date: '2019-11-21'
 description: tcp三次握手具体流程，为什么是3次而不是2次或者4次
 ---
 
@@ -53,3 +53,4 @@ I'm fine 的回应和 and you 完全可以放到同一个消息里，没必要�
 #### 参考
 
 [维基百科: TCP](https://zh.wikipedia.org/wiki/传输控制协议)
+[知乎: TCP 为什么是三次握手，而不是两次或者四次](https://www.zhihu.com/question/24853633)
