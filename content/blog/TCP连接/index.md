@@ -39,7 +39,7 @@ TCP 协议的运行可划分为三个阶段：连接创建(_connection establish
 1. client 向 server 发送一个连接请求，SYN 带上随机数 A
 2. server 回复 ACK/SYN，ACK 带上 A+1，SYN 带上自己的随机数 B
 
-以上保证了 client 向 server 发送请求的准确性，如果 server 发送的 ACK/SYN 包丢失，那么 server 向 client 发送消息的初始序号号 B 就无法同步
+以上保证了 client 向 server 发送请求的准确性，如果 server 发送的 ACK/SYN 包丢失，那么 server 向 client 发送消息的初始序号 B 就无法同步
 
 ##### 为什么不是 4 次
 
