@@ -1,11 +1,11 @@
 {
-  "name": "gatsby-starter-blog",
+  "name": "feiker's blog",
   "private": true,
-  "description": "A starter for a blog powered by Gatsby and Markdown",
+  "description": "personal blog",
   "version": "0.1.0",
-  "author": "Kyle Mathews <mathews.kyle@gmail.com>",
+  "author": "feikerwu <feikerwu@gmail.com>",
   "bugs": {
-    "url": "https://github.com/gatsbyjs/gatsby/issues"
+    "url": "https://github.com/feikerwu/blog/issues"
   },
   "dependencies": {
     "gatsby": "^2.17.10",
@@ -41,7 +41,7 @@
   "devDependencies": {
     "prettier": "^1.19.1"
   },
-  "homepage": "https://github.com/gatsbyjs/gatsby-starter-blog#readme",
+  "homepage": "https://github.com/feikerwu/blog#readme",
   "keywords": [
     "gatsby"
   ],
@@ -49,7 +49,7 @@
   "main": "n/a",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gatsbyjs/gatsby-starter-blog.git"
+    "url": "git+https://github.com/feikerwu/blog"
   },
   "scripts": {
     "dev": "gatsby develop",
