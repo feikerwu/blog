@@ -1,5 +1,5 @@
 {
-  "name": "feiker's blog",
+  "name": "feiker-blog",
   "private": true,
   "description": "personal blog",
   "version": "0.1.0",
@@ -54,6 +54,6 @@
   "scripts": {
     "dev": "gatsby develop",
     "format": "prettier --write \"**/*.{js,jsx,json,md}\"",
-    "deploy": "git checkout release & git merge master & git push"
+    "deploy": "gatsby build --prefix-paths && gh-pages -d public"
   }
 }
