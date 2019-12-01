@@ -15,6 +15,10 @@ description: 《the-art-of-command-line》读书笔记
 - `!!` 执行上一个命令
 - 在命令的最前面添加#可以将这条命令给注释掉，example, 命令写到一半，通过`ctrl a #`注释命令，下次通过`ctrl + r`进入命令搜索再次执行
 
+#### xargs
+
+##### xargs 用法
+
 #### 参考
 
 - [explainshell 一个解释 bash 命令的一个工具](https://explainshell.com/)
