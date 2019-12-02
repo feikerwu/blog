@@ -17,7 +17,20 @@ description: 《the-art-of-command-line》读书笔记
 
 #### xargs
 
+xargs标准输入转化为命令行参数，有些命令不支持标准输入，必须得在命令行输入参数，这时候就可以用xargs转化
+
 ##### xargs 用法
+
+xargs 使用格式
+```bash
+xargs [-options] [command]
+```
+
+##### example
+
+##### w
+w查看系统运行时间
+
 
 #### 参考
 
