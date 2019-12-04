@@ -17,20 +17,28 @@ description: 《the-art-of-command-line》读书笔记
 
 #### xargs
 
-xargs标准输入转化为命令行参数，有些命令不支持标准输入，必须得在命令行输入参数，这时候就可以用xargs转化
+xargs 标准输入转化为命令行参数，有些命令不支持标准输入，必须得在命令行输入参数，这时候就可以用 xargs 转化
 
-##### xargs 用法
+- xargs 用法
 
 xargs 使用格式
+
 ```bash
 xargs [-options] [command]
 ```
 
-##### example
+- tee 用于将标准输出写到文本文件
 
-##### w
-w查看系统运行时间
+```bash
+ls -al | tee file.txt # 将当前的文件信息保存到file.txt文件
+```
 
+- sort 用来对文本排序并将排序内容输出
+
+- grep 全称(global search regular expression(RE) and print out the line) 全面搜索正则表达式并把行打印出来
+  用的比较多的是 `grep -E 'reg' file` 在 file 里面去搜索某些正则可以匹配出来的内容
+
+-
 
 #### 参考
 
