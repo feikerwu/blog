@@ -34,11 +34,11 @@ ls -al | tee file.txt # 将当前的文件信息保存到file.txt文件
 ```
 
 - sort 用来对文本排序并将排序内容输出
-
 - grep 全称(global search regular expression(RE) and print out the line) 全面搜索正则表达式并把行打印出来
   用的比较多的是 `grep -E 'reg' file` 在 file 里面去搜索某些正则可以匹配出来的内容
-
--
+- du (disk usage) 用于查看当前文件的大小
+- lsof(list open file)打开所有打开的文件
+- type 来查看命令的类型
 
 #### 参考
 
