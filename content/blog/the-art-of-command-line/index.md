@@ -40,6 +40,8 @@ ls -al | tee file.txt # 将当前的文件信息保存到file.txt文件
 - lsof(list open file)打开所有打开的文件
 - type 来查看命令的类型
 
+
 #### 参考
 
 - [explainshell 一个解释 bash 命令的一个工具](https://explainshell.com/)
+- [可以替换 man page更简洁的工具](https://github.com/tldr-pages/tldr)
