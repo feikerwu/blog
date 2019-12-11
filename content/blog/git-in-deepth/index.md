@@ -4,6 +4,19 @@ date: 2019-12-11
 description: 深入探索git底层原理以及常用操作
 ---
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 ### git 操作
 1.	git(distributed version control system) 分布式版本控制系统
 2.	git内部，git 通过一个key/value的形式保存，key是一个hash串，value是数据内容
