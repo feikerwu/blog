@@ -12,7 +12,7 @@ description: webp
 
 #### js 支持
 
-写个插件，集成到 webpack，判断浏览器是否是 webp, 是则请求 webp，否 jpg
+写个插件，集成到 ˜ webp, 是则请求 webp，否 jpg
 
 #### 服务端支持
 
