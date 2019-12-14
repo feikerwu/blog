@@ -124,42 +124,70 @@ init
 
 ###  references 
 
-head
+head, 标签以及分支都只是一个commit的引用，或者别名。引用信息存储在 `.git/refs` 文件夹下
+
+```bash
+tree .git/refs
+.git/refs
+├── heads
+│   ├── master
+│   └── test
+└── tags
+    └── tag-1
+    
+
+git log --oneline 
+9ea265b (HEAD -> master, tag: tag-1, test) init
+
+# 查看文件内容
+cat .git/refs/heads/master
+9ea265b576f105b3c7515c691fd6bd2d202d68a8
+
+```
+
+通过以上，可以看到refs/heads/master 存储hash值和当前commit hash值相同
 
 
 
-#### 标签 tags
+#### 标签 tag
+
+git tag 给某个commit打标签，用于快速或检出有里程碑意义的commit。注意，tag确定，其指向的commit就不会变。
+
+```bash
+# 给最新的提交添加一个tag
+git tag `tag-name`
+
+# 给某个特定的commit添加一个tag
+git tag `tag-name` `hash{8}`
+
+# 给最新的提交添加一个tag，并且添加一些信息
+git tag `tag-name` -m `message`
+```
+
+
 
 #### 分支 branch
 
-#### Head
+branch 也是commit的引用，和tag不同的是，branch指向的commit会随着提交更新
 
 
 
-### git 操作
+### Tips
 
+1. 如果有人在本地误操作将某条分支删除，并且没有推送到远程仓库，如何恢复
 
+   注意到，分支只是commit的一个引用，只要commit没有被删除，提交内容都可以恢复 ，具体操作 如下
 
+   ```bash
+   ## 列出所有分支的提交记录，找到被删除分支的commit
+   git relog 
+   ## 签出恢复
+   git checkout `找到的commit`
+   ```
 
+2. 列出所有已经合入到 master 的分支` git branch —merged master`
 
-15. tags/branches/HEAD 都是对 commit 的一个引用，指针指向一个 commit 信息
-16. 工作区存的是 untracked files, 暂存区存的是已修改代码，准备加入到下一个 commit 的内容
-17. git ls-files -s 会显示所有已经加入到暂存区的文件内容
-18. git add -p 交互式的添加内容到暂存区
-19. git stash --include-untracked // 将包括未跟踪的文件加入到暂存区
-20. 通过 git reset 将加入到存储区的内容重置到工作区
-21. references 引用指向 commit，包括 tags/branches/HEAD
-22. HEAD 指向 Branch， Branch 指向 commit
-23. branch 指针随着 commit 提交向前演进
-24. tag 是一次快照，定下后不再改变
-25. 列出所有已经合入到 master 的分支 git branch —merged master
-26. 列出所有没有合入到 master 的分支 git branch --no-merged master
-27. git reset —soft HEAD~ 只是简单的移动 HEAD 指针
-28. git reset —hard 覆写工作区以及暂存区的内容，并且无法 undone
-29. 检出一个远程分支，并且 track git checkout -t origin/feature
-30. git branch -vv 查看本地分支和远程分支的追踪情况
-31. git pull = git fetch && git merge
-32. 查看哪些分支没有被 push git cherry -v
+3. 列出所有没有合入到 master 的分支 `git branch --no-merged maste`
 
 
 
