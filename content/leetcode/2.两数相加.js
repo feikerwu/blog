@@ -1,3 +1,4 @@
+/* eslint-disable */
 /*
  * @lc app=leetcode.cn id=2 lang=javascript
  *
