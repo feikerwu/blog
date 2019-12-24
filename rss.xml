@@ -1,0 +1,752 @@
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel><title><![CDATA[feiker的小站]]></title><description><![CDATA[个人站a点，用于记录随笔，博客]]></description><link>https://feikerwu.github.io/blog</link><generator>GatsbyJS</generator><lastBuildDate>Tue, 24 Dec 2019 03:07:25 GMT</lastBuildDate><item><title><![CDATA[大文件数据排序]]></title><description><![CDATA[talk is cheap, show me the code! 外排序算法 将 100 亿数据拆分成 100 块，分块读取存到 100 个小文件 对 100 个小文件(1 亿数据)排序 因为内存只允许 1 亿数据操作，对 100 个文件，每次读取 100 万数据，做 10…]]></description><link>https://feikerwu.github.io/blog/big-file/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/big-file/</guid><pubDate>Sat, 14 Dec 2019 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;talk is cheap, show me the code!&lt;/p&gt;
+&lt;p&gt;外排序算法&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;将 100 亿数据拆分成 100 块，分块读取存到 100 个小文件&lt;/li&gt;
+&lt;li&gt;对 100 个小文件(1 亿数据)排序&lt;/li&gt;
+&lt;li&gt;因为内存只允许 1 亿数据操作，对 100 个文件，每次读取 100 万数据，做 100 路归并排序，将结果写入到目标文件&lt;/li&gt;
+&lt;li&gt;重复 3 操作，依次读取剩下的数据，排序后追加到目标文件结尾&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3&gt;构造测试数据&lt;/h3&gt;
+&lt;p&gt;100 亿数据，为了方便测试，用一个整数代表一条数据。
+javascript 中，Number 类型采用 IEEE754 标准中的 “双精度浮点数” 来表示一个数字，不区分整数和浮点数。IEEE754，双精度浮点数采用 64 位存储，也就是 8 个 byte。
+&lt;img src=&quot;https://upload.wikimedia.org/wikipedia/commons/7/76/General_double_precision_float.png&quot;&gt;
+那么 100 亿数据大概就是 &lt;code class=&quot;language-text&quot;&gt;100 * 100000000 * 8 = 80000000000 / 1024 / 1024 / 1024 = 74.5 G&lt;/code&gt;, OK，看了下小霸王的剩余存储空间，可以下一题了。&lt;/p&gt;
+&lt;p&gt;以上纯属为了分析，因为只是为了模拟，所以数据量没必要那么大，减少数据量，改下题&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;100 万排序问题：内存不足，一次只允许你装载和操作 1 万条数据，如何对 100 万条数据进行排序&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;100 万大概是 &lt;code class=&quot;language-text&quot;&gt;100 * 10000 * 8 = 8000000 / 1024 / 1024 = 7.62 M&lt;/code&gt;, 大小上可以接受。&lt;/p&gt;
+&lt;h5&gt;生成文件&lt;/h5&gt;
+&lt;p&gt;生成 100w 数据的文件&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;typescript&quot;&gt;&lt;pre class=&quot;language-typescript&quot;&gt;&lt;code class=&quot;language-typescript&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;as&lt;/span&gt; fs &lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;fs&apos;&lt;/span&gt;
+&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;as&lt;/span&gt; path &lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;path&apos;&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; &lt;span class=&quot;token constant&quot;&gt;DATA_SIZE&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;number&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;1000000&lt;/span&gt;
+&lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; &lt;span class=&quot;token constant&quot;&gt;DATA_RANGE&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;number&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;1000000&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; data&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;Array&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;&amp;lt;&lt;/span&gt;&lt;span class=&quot;token builtin&quot;&gt;number&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;Array&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt; length&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token constant&quot;&gt;DATA_SIZE&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;map&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;_&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt;
+  Math&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;floor&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;Math&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;random&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;token constant&quot;&gt;DATA_RANGE&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+fs&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;writeFile&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;path&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;resolve&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;__dirname&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;big-data&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; data&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;join&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos; &apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;将文件分割成 100 分，根据上述分析，每次读取的文件大小应该是 &lt;code class=&quot;language-text&quot;&gt;8 * 10000&lt;/code&gt;&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;typescript&quot;&gt;&lt;pre class=&quot;language-typescript&quot;&gt;&lt;code class=&quot;language-typescript&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;as&lt;/span&gt; fs &lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;fs&apos;&lt;/span&gt;
+&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;as&lt;/span&gt; path &lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;path&apos;&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; &lt;span class=&quot;token function-variable function&quot;&gt;resolve&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;filename&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;string&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; path&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;resolve&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;__dirname&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; filename&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; splitedDir&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;string&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;splited&apos;&lt;/span&gt;
+fs&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;mkdir&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;resolve&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;splitedDir&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt; recursive&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token boolean&quot;&gt;true&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token parameter&quot;&gt;err&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;console&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;error&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;err&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; readStream &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; fs&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;createReadStream&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;resolve&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;big-data&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  highWaterMark&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;8&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;10000&lt;/span&gt; &lt;span class=&quot;token comment&quot;&gt;// 以固定大小读取文件&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; count &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;
+
+readStream&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;on&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;data&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token parameter&quot;&gt;chuck&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  fs&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;writeFile&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;resolve&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token template-string&quot;&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;splitedDir&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;/&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;count&lt;span class=&quot;token operator&quot;&gt;++&lt;/span&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; chuck&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token parameter&quot;&gt;err&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt;
+    &lt;span class=&quot;token builtin&quot;&gt;console&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;error&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;err&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+readStream&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;on&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;end&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  &lt;span class=&quot;token builtin&quot;&gt;console&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;log&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;write end&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;用以上代码去分割，按照预期，应该分割成 100 个文件，每个文件 &lt;code class=&quot;language-text&quot;&gt;8 * 10000 = 78.15k&lt;/code&gt; 才对，当我自信满满的去看生成文件，发现只生成了 86 个文件，且每个文件的大小是 80k，86 * 80k = 6.7M 和 预期的 7.6M 也不符合，看了下生成文件的确是 6.7M&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;&lt;span class=&quot;token function&quot;&gt;du&lt;/span&gt; -h big-data
+&lt;span class=&quot;token number&quot;&gt;6&lt;/span&gt;.6M	big-data&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;仔细看了下生成的文件的代码，我们在存储数据的时候，是采用 &lt;code class=&quot;language-text&quot;&gt;data.join(&amp;#39; &amp;#39;)&lt;/code&gt; 转换成字符串来存储，这里的字符是用&lt;code class=&quot;language-text&quot;&gt;utf-8&lt;/code&gt;编码，UTF-8 编码把一个 Unicode 字符根据不同的数字大小编码成 1-6 个字节，常用的英文字母被编码成 1 个字节，汉字通常是 3 个字节，只有很生僻的字符才会被编码成 4-6 个字节，所以相比原来规规矩矩的双精度浮点数 8 个字节有压缩。&lt;/p&gt;
+&lt;p&gt;不过没关系，只是为了模拟操作，86 个文件也够用&lt;/p&gt;
+&lt;h5&gt;排序以及写入到目标文件&lt;/h5&gt;
+&lt;p&gt;在排序之前，遇到一个新问题&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;如何从 86 个文件中同时读取固定大小的内容，处理后可以再次读取&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;google 了下，找到的都是如何从一个大文件分片读取，通过新建一个可读流，依靠触发’data’事件，来一点点读数据，但是我想要的是从 80 多个文件同时读取。
+流既然可以分块读取文件，那么我能不能让它停下来，开 86 个可读性流，每个流读取一块数据后停下来，待 86 个数据都被读取后并处理后，让流继续读取文件。
+问题规约为如何让可读文件流暂停，翻了下 node 文档, 可读流分为两种模式，其中一种叫&lt;code class=&quot;language-text&quot;&gt;paused&lt;/code&gt;, 在这种模式下，只有调用了&lt;code class=&quot;language-text&quot;&gt;stream.read()&lt;/code&gt;才能读取下一块内容。
+具体可以看&lt;a href=&quot;https://nodejs.org/dist/latest-v13.x/docs/api/stream.html#stream_two_reading_modes&quot;&gt;node 的 stream 部分&lt;/a&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Readable streams effectively operate in one of two modes: flowing and paused. These modes are separate from object mode. A Readable stream can be in &gt; object mode or not, regardless of whether it is in flowing mode or paused mode.
+In flowing mode, data is read from the underlying system automatically and provided to an application as quickly as possible using events via the &gt; &gt; EventEmitter interface.
+In paused mode, the stream.read() method must be called explicitly to read chunks of data from the stream.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;前置问题都解决了，可以开始写排序代码了&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;typescript&quot;&gt;&lt;pre class=&quot;language-typescript&quot;&gt;&lt;code class=&quot;language-typescript&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;as&lt;/span&gt; fs &lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;fs&apos;&lt;/span&gt;
+&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;as&lt;/span&gt; path &lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;path&apos;&lt;/span&gt;
+&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;as&lt;/span&gt; readline &lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;readline&apos;&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;async&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;function&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;createReadlines&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; files &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;await&lt;/span&gt; fs&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;promises&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;readdir&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;path&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;resolve&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;__dirname&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;splited&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; channels&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;Array&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;&amp;lt;&lt;/span&gt;readline&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Interface&lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; files&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;map&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;file&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; stream &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; fs&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;createReadStream&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+      path&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;resolve&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;__dirname&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token template-string&quot;&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;splited/&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;file&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; readline&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;createInterface&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      input&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; stream
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+  &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; channels
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;async&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;function&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;sort&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; distFile &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; fs&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;createWriteStream&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;path&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;resolve&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;__dirname&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;out&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; channels &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;await&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;createReadlines&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; srcData &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;Array&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;channels&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;map&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;item&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+  channels&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;forEach&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;channel&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; index&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    channel&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;on&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;line&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token parameter&quot;&gt;num&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      srcData&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;index&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;push&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;+&lt;/span&gt;num&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+  &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; termData &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;for&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; i &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt; i &lt;span class=&quot;token operator&quot;&gt;&amp;lt;&lt;/span&gt; srcData&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;length&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt; i&lt;span class=&quot;token operator&quot;&gt;++&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    termData&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;push&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; srcData&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;shift&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+  &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; c &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;100&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;while&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;c&lt;span class=&quot;token operator&quot;&gt;--&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; min &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;-&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;Infinity&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; count &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;for&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; i &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt; i &lt;span class=&quot;token operator&quot;&gt;&amp;lt;&lt;/span&gt; termData&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;length&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt; i&lt;span class=&quot;token operator&quot;&gt;++&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      &lt;span class=&quot;token keyword&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;termData&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;===&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;-&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+        count &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; count &lt;span class=&quot;token operator&quot;&gt;+&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;
+      &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;else&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+        &lt;span class=&quot;token keyword&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;min&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; termData&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;i&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+          min &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; termData
+        &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+      &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+    &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;index&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; value&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; min
+    &lt;span class=&quot;token keyword&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;index &lt;span class=&quot;token operator&quot;&gt;!==&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;-&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;&amp;amp;&amp;amp;&lt;/span&gt; srcData&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;index&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;length &lt;span class=&quot;token operator&quot;&gt;!==&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      termData&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;index&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;index&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; srcData&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;index&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;shift&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;else&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      termData&lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;index&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;-&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;Infinity&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+    distFile&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;write&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token template-string&quot;&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;value&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt; &lt;/span&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+    &lt;span class=&quot;token comment&quot;&gt;// 数据被处理完了&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;count &lt;span class=&quot;token operator&quot;&gt;===&lt;/span&gt; termData&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;length&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      &lt;span class=&quot;token keyword&quot;&gt;break&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+&lt;span class=&quot;token function&quot;&gt;sort&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/airuikun/Weekly-FE-Interview/issues/18&quot;&gt;原题地址&lt;/a&gt;&lt;/p&gt;</content:encoded></item><item><title><![CDATA[深度理解git]]></title><description><![CDATA[git (分布式版本管理系统) 是目前使用最广泛的一个版本控制系统，知其然以及知其所以然能帮助我们在开发过程中快速定位问题。 git 底层 git 是一个内容寻址文件系统，核心部分就是一个简单的 key-value 键值数据库，key 是一个 sha1 计算后的 hash…]]></description><link>https://feikerwu.github.io/blog/git-in-deepth/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/git-in-deepth/</guid><pubDate>Wed, 11 Dec 2019 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;git (分布式版本管理系统) 是目前使用最广泛的一个版本控制系统，知其然以及知其所以然能帮助我们在开发过程中快速定位问题。&lt;/p&gt;
+&lt;h4&gt;git 底层&lt;/h4&gt;
+&lt;p&gt;git 是一个内容寻址文件系统，核心部分就是一个简单的 key-value 键值数据库，key 是一个 sha1 计算后的 hash 串，value 是压缩后的数据文件(blob)。&lt;/p&gt;
+&lt;h4&gt;blob&lt;/h4&gt;
+&lt;p&gt;git 仓库的所有文件都是用 blob(二进制数据文件)存储的，文件内容存储在.git/objects， 以文件内容的hash值前两位作为目录名，hash2位后作为文件名&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto;  max-width: 590px;&quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/blog/static/b2ef4023a3ae8e6fe2b0afa1062c4c01/99445/image-20191212174229961.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 64.88469601677149%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAANCAYAAACpUE5eAAAACXBIWXMAABYlAAAWJQFJUiTwAAABE0lEQVQ4y5WT226DMBBE+f8/pIAQ6kO5GV8wF6nA1ON2ozwkTWxptMbWHg9rb/alR3z0PT69h7In1rbHt7VY9w2LX2CMwTzPuK4LHBKfjcxqAzMpOKPhZwu/rjAB6KyLIBvmPhwmsJdAJk1aow8uu47q0LVtjL9rHXTYfxtIB9M0YRzHCBiG4RZl7pxLc8g6CVCcCZDrPDQJyASl1M0RJd/JQBacUAL465TMCaO4nwRkjZgoQIEJPBnIBN4kJe7uYxJQash66b/nQ3dST17Soxo+A2ePLoSQ++cjwHdcZnwyBCzLEjuCkVpDx1Bc2/cdx3FEvXR4nifa0BlN0yDPc5RliaqqUBRFjFRd13GPcdu2f4E/wDDwG0z8lxgAAAAASUVORK5CYII=&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;image-20191212174229961&quot;
+        title=&quot;image-20191212174229961&quot;
+        src=&quot;/blog/static/b2ef4023a3ae8e6fe2b0afa1062c4c01/b9e4f/image-20191212174229961.png&quot;
+        srcset=&quot;/blog/static/b2ef4023a3ae8e6fe2b0afa1062c4c01/cf440/image-20191212174229961.png 148w,
+/blog/static/b2ef4023a3ae8e6fe2b0afa1062c4c01/d2d38/image-20191212174229961.png 295w,
+/blog/static/b2ef4023a3ae8e6fe2b0afa1062c4c01/b9e4f/image-20191212174229961.png 590w,
+/blog/static/b2ef4023a3ae8e6fe2b0afa1062c4c01/f9b6a/image-20191212174229961.png 885w,
+/blog/static/b2ef4023a3ae8e6fe2b0afa1062c4c01/2d849/image-20191212174229961.png 1180w,
+/blog/static/b2ef4023a3ae8e6fe2b0afa1062c4c01/99445/image-20191212174229961.png 1908w&quot;
+        sizes=&quot;(max-width: 590px) 100vw, 590px&quot;
+        loading=&quot;lazy&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;git 以 &lt;code class=&quot;language-text&quot;&gt;blob ${文件大小} \0 ${文件内容}&lt;/code&gt; 来计算 hash，通过以下验证&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;&lt;span class=&quot;token builtin class-name&quot;&gt;echo&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;test&apos;&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;|&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;git&lt;/span&gt; hash-object --stdin
+9daeafb9864cf43055ae93beb0afd6c7d144bfa4
+
+&lt;span class=&quot;token builtin class-name&quot;&gt;echo&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;blob 5&lt;span class=&quot;token entity&quot; title=&quot;\0&quot;&gt;\0&lt;/span&gt;test&apos;&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;|&lt;/span&gt; openssl sha1
+9daeafb9864cf43055ae93beb0afd6c7d144bfa4&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;可以看到文本 test 通过 git 计算的 hash 和文本&lt;code class=&quot;language-text&quot;&gt;blob 5\0test&lt;/code&gt; 在 sha1 计算的 hash 值一样&lt;/p&gt;
+&lt;h4&gt;tree&lt;/h4&gt;
+&lt;p&gt;把文件cat出来，发现是一堆乱码，那是因为blob文件是被压缩过的，文件的头stat信息以及文件组织结构都被丢失了。&lt;/p&gt;
+&lt;p&gt;git用tree来保存这些信息，一个tree包括了&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;指向其它tree或者blob的指针&lt;/li&gt;
+&lt;li&gt;指针类型（它是tree还是blob）&lt;/li&gt;
+&lt;li&gt;文件名&lt;/li&gt;
+&lt;li&gt;文件权限（可读，可些，可执行）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;可以把master分支上最新提交所指向的树对象打印出来看看&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;&lt;span class=&quot;token function&quot;&gt;git&lt;/span&gt; cat-file -p master^&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;tree&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+&lt;span class=&quot;token number&quot;&gt;100644&lt;/span&gt; blob 87adace1aa1660900f66db4db04afceb1c9973cd	.gitignore
+&lt;span class=&quot;token number&quot;&gt;100644&lt;/span&gt; blob 5312291951904c9402e5b2ef79f3e7d5591e60df	TODO.md
+040000 tree d5633113208cb719f0756b122b049f0fb0e1fc6c	dist
+040000 tree ba509bd56e0c77ed2581e78c754535d323f7c47b	example
+&lt;span class=&quot;token number&quot;&gt;100644&lt;/span&gt; blob bc3140ee20e132f81fbe67c49f4cfdffcbb7d7e3	package-lock.json
+&lt;span class=&quot;token number&quot;&gt;100644&lt;/span&gt; blob 15861951236a4b10137918c87bbde51553e50c4b	package.json
+040000 tree f27cd1e5968a1d240c3779ee4fd0bcb588f388b5	src
+&lt;span class=&quot;token number&quot;&gt;100644&lt;/span&gt; blob e18e7f8d08f47ea47c97725b3eac5d0df80dcbdd	tsconfig.json&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;其实tree就是我们理解数据结果的那个tree，tree的中间节点指向其它的tree，叶子节点指向blob&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto;  max-width: 590px;&quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/blog/static/865c3e3886016dc7c722d039e5b1e89f/3658a/image-20191212175640772.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 75.7217847769029%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAPCAYAAADkmO9VAAAACXBIWXMAAAsSAAALEgHS3X78AAACMklEQVQ4y42T6W8SQRjG+auNmjTlD9CQygdJGmPUVNPoB2Ip5VoWWO5DKKU0tiZWKHLfe9A9eJyZhSVcsW+y2d1nZn7zvs87Y8OOmM/n7G1oGlrtNjRVXdPpe/m9GbZ9MJ1ATkM8HD4en4M8+38KdAtoLCbVGw28Og/hOFWEIxBD+kdpbdN9YNvmpOWgIst47wvBlSjA5fGjSUpv9fuYiBL2rSEf68DNHX/X6iheVdDqdDAWRaZ1h0O0Cdgw5htWGdslr1Kf4/5PDc1uzxpr9gYYjkTSIAPKo4ZGu4PRVMaUPLOZZq3fynCmKHALKbzxhsBlcmTA3LlcLcPjdUCIuNBs1pkWiPjBBR2Ix96h2+2sMqQwwzAX5kmJR1wcb4UcXru9kCURdKuE8Akx7gDh4Eukk6eQFaLFjpGI2uE7f4Z8zrMbWHt4wBHJzhnN4EMgDHWmMD2XvYDAHyLK2XFZ4pmWjH9lwHDAjmo1awJppUtDaYwmUxQq1+CzedKUmmWHquqoXKVQvc5C08z5MknzsiTg9mcJi3wo0PRuOlVw32ijP55Y8L/dMSRFtxq1u4HrGiv5110ZUd4J95kTfXIkaAwGfYQjJ+D4j+j1TMN1XSOZ6GtHjP5Tu5aaTZIeidFO5k/w4jkKeZ/lD+d/ASF8ACF2At0ws9x3h62bouu0g1+IuYcEYMfNTZ4NZNJnrKNUTyW/weQ8AWj6J6JU5HF3uzJXkmRyFLzIZr5jvPD1fzAa/wCjGGW4WbshJwAAAABJRU5ErkJggg==&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;image-20191212175640772&quot;
+        title=&quot;image-20191212175640772&quot;
+        src=&quot;/blog/static/865c3e3886016dc7c722d039e5b1e89f/b9e4f/image-20191212175640772.png&quot;
+        srcset=&quot;/blog/static/865c3e3886016dc7c722d039e5b1e89f/cf440/image-20191212175640772.png 148w,
+/blog/static/865c3e3886016dc7c722d039e5b1e89f/d2d38/image-20191212175640772.png 295w,
+/blog/static/865c3e3886016dc7c722d039e5b1e89f/b9e4f/image-20191212175640772.png 590w,
+/blog/static/865c3e3886016dc7c722d039e5b1e89f/3658a/image-20191212175640772.png 762w&quot;
+        sizes=&quot;(max-width: 590px) 100vw, 590px&quot;
+        loading=&quot;lazy&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;h4&gt;其它优化&lt;/h4&gt;
+&lt;ol&gt;
+&lt;li&gt;如果git仓库中的存在文件出现多次，比如file-A被拷贝到dir-B/fiel-C，那么这个文件在git里面只会被保存一次，因为它的文件内容是一样，不一样的只是文件名以及文件位置，只要把这些信息保存在tree里面，就可以定位到具体的内容&lt;/li&gt;
+&lt;li&gt;git object 是压缩后的数据，如果 object 过多，git 会把资源数据打包成有个 Packfile，Packfile 保存文件内容，以及每次增量更新的修改。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3&gt;commit&lt;/h3&gt;
+&lt;p&gt;每次的commit都指向一个tree，并且包含一些头信息&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;代码修改者以及提交者&lt;/li&gt;
+&lt;li&gt;日期&lt;/li&gt;
+&lt;li&gt;commit message&lt;/li&gt;
+&lt;li&gt;当前commit的上一次提交，如果是merge操作，可能会有多个parent commit&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;git 会根据以上信息计算一个sha1，作为commit的唯一key &lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto;  max-width: 590px;&quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/blog/static/7dde43f18042d5cf873ed65f00873500/b2a12/image-20191213162249523.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 109.84126984126985%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAWCAYAAADAQbwGAAAACXBIWXMAAAsSAAALEgHS3X78AAAEAElEQVQ4y5VVa08bRxT1f+ynSk2lSqlSqZASggF77fVrd722MdgGE6wmLQkJCdhporYQg/GLUvwINMaOedmG9PWl+ZJKNDQKcHrveF0c2g/tWlczs7Nz5px7z4xNoOfV76/wx/FrvD15i9fHx/jzzRuc0e/k9OQ/xenpKcPg7OwMJu7UKzUkHsSRSqaQT+dQLmzg/z4Mxo/p4MUhZp7cw1Qihsj9KG7EY4jOT2F6YQbx3EPcX57Dg5V5zGUSmEvH25GJi/F89iFmlmZReFYUYMzUlFpbwbVVK9TmKJQGRxCuHT/sWxqcOz58HO9BX9oCR12HbUuFvapCrmmQKor4pr8sIbZ0SwCyfFO+tAqp6MHVR2Z8EP4I76nv41L0Mj6kUOtj6F+wQC6q0OoRDKV1SGt+WPN+eHfDCDQn4Nz2407+ngFIDHOlPBwVHc4fdFjyLgzlnLCuuWEnkODPN3B9SYJj0wt9PwpbYQT2UhC29SD8BxMI/jgJd2MEd76bPQfMrGXwSaIPgxkZQ1mHCHPajoGUjfoyLk1expXZq+13y1bawEqthP4ktUkJVx5/htg3N88lZ77PoufrAQznnQKUg/sMzH3zir29Wa69mVBhbGwhNb1LZny++MU5YK6Yh7Pqw9ivU5SXMQFgWXUh8CKKQGsCgcN2BH+ahK2ooP+JFf2LFkqRD6FfYnDvk+TVrhxmiznYygrlKAylHoR7KwDnMx+0nTFo2xyjUCl47KmNwLmpw1XxU8FGoe+FqfIaprMz5wwZUCopYlIEAfsaEWIbglILQn0eFMAM4N0LiTl/cxxe2sC7HRLWmc50AxZysG9o4kOurjkti4IwSwZgYC9v0oxQhVXhAs4xs+SUyOTP27m7FwFVsdhWILOWNdF6qiMCTEin3DIgW0ta90CieXc1AH9jHPaaF9PdgFwUiXLIi1lKJ3gDpdqWzHJZNqeD5xhcMyTbKirl8G6XsbkoTxUh2UWVk8teOJ56oXDumJ3BkMG4KDIp4MKo9J5zLhPDf0re1OBvjQsjDyzbRA7dJJkXtHMYgt4IC6uwodmDKjHmo8c5vCDZsA0vJpnMhIP7Wt2wzm6baWee1ejcp/Nsr17IobCNAaiQJJbKfuxYxV0JCG+yXJ7nYolvqK8+H4V104NbqdvvSpZJskIf9nxFR5CO2KeJ6+j7dliwcW7ouEY3jpnSMJjmoyhDLmnofWymG2oQvUkzbia/fJehXPHSUZuArxURoe1Rwptt7/FY9I220+fwH4zDseuj26b76K3n0PuImGXIsCt06DnSRpuiy8IInhvuvCeW3FrSdDksEMPFLoZHR0dotppoHbbQOmhH04jucevfxrRmv9nAby9f/v2/8hcC6E4BVDEE0gAAAABJRU5ErkJggg==&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;image-20191213162249523&quot;
+        title=&quot;image-20191213162249523&quot;
+        src=&quot;/blog/static/7dde43f18042d5cf873ed65f00873500/b9e4f/image-20191213162249523.png&quot;
+        srcset=&quot;/blog/static/7dde43f18042d5cf873ed65f00873500/cf440/image-20191213162249523.png 148w,
+/blog/static/7dde43f18042d5cf873ed65f00873500/d2d38/image-20191213162249523.png 295w,
+/blog/static/7dde43f18042d5cf873ed65f00873500/b9e4f/image-20191213162249523.png 590w,
+/blog/static/7dde43f18042d5cf873ed65f00873500/b2a12/image-20191213162249523.png 630w&quot;
+        sizes=&quot;(max-width: 590px) 100vw, 590px&quot;
+        loading=&quot;lazy&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;每个commit都是当前代码的一次快照&lt;/p&gt;
+&lt;p&gt;可以通过一下操作验证&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;&lt;span class=&quot;token comment&quot;&gt;# 打印objects下的文件&lt;/span&gt;
+tree .git/objects
+
+objects/
+├── 4b
+│   └── 825dc642cb6eb9a060e54bf8d69288fbee4904
+├── 9d
+│   └── aeafb9864cf43055ae93beb0afd6c7d144bfa4
+├── 9e
+│   └── a265b576f105b3c7515c691fd6bd2d202d68a8
+├── c0
+│   └── 7b19257d9414174748d121caf7e6e09c753a6b
+├── info
+└── pack
+
+&lt;span class=&quot;token comment&quot;&gt;# 通过git cat-file -t 找到上次commit提交的sha1&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;git&lt;/span&gt; cat-file -t 9ea265
+commit
+
+&lt;span class=&quot;token comment&quot;&gt;# 查看上次commit的信息&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;git&lt;/span&gt; cat-file -p 9ea265
+
+tree c07b19257d9414174748d121caf7e6e09c753a6b
+author feikerwu &lt;span class=&quot;token operator&quot;&gt;&amp;lt;&lt;/span&gt;feikerwu@gmail.com&lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;1576226621&lt;/span&gt; +0800
+committer feikerwu &lt;span class=&quot;token operator&quot;&gt;&amp;lt;&lt;/span&gt;feikerwu@gmail.com&lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;1576226621&lt;/span&gt; +0800
+
+init
+
+&lt;span class=&quot;token comment&quot;&gt;## 可以看到一个commit的包含的所有信息&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;h3&gt;references&lt;/h3&gt;
+&lt;p&gt;head, 标签以及分支都只是一个commit的引用，或者别名。引用信息存储在 &lt;code class=&quot;language-text&quot;&gt;.git/refs&lt;/code&gt; 文件夹下&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;tree .git/refs
+.git/refs
+├── heads
+│   ├── master
+│   └── &lt;span class=&quot;token builtin class-name&quot;&gt;test&lt;/span&gt;
+└── tags
+    └── tag-1
+    
+
+&lt;span class=&quot;token function&quot;&gt;git&lt;/span&gt; log --oneline 
+9ea265b &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;HEAD -&lt;span class=&quot;token operator&quot;&gt;&gt;&lt;/span&gt; master, tag: tag-1, &lt;span class=&quot;token builtin class-name&quot;&gt;test&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; init
+
+&lt;span class=&quot;token comment&quot;&gt;# 查看文件内容&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;cat&lt;/span&gt; .git/refs/heads/master
+9ea265b576f105b3c7515c691fd6bd2d202d68a8&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;通过以上，可以看到refs/heads/master 存储hash值和当前commit hash值相同&lt;/p&gt;
+&lt;h4&gt;标签 tag&lt;/h4&gt;
+&lt;p&gt;git tag 给某个commit打标签，用于快速或检出有里程碑意义的commit。注意，tag确定，其指向的commit就不会变。&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;&lt;span class=&quot;token comment&quot;&gt;# 给最新的提交添加一个tag&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;git&lt;/span&gt; tag &lt;span class=&quot;token variable&quot;&gt;&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;tag-name&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# 给某个特定的commit添加一个tag&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;git&lt;/span&gt; tag &lt;span class=&quot;token variable&quot;&gt;&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;tag-name&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;&lt;/span&gt; &lt;span class=&quot;token variable&quot;&gt;&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;hash&lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;8&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;&lt;/span&gt;
+
+&lt;span class=&quot;token comment&quot;&gt;# 给最新的提交添加一个tag，并且添加一些信息&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;git&lt;/span&gt; tag &lt;span class=&quot;token variable&quot;&gt;&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;tag-name&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;&lt;/span&gt; -m &lt;span class=&quot;token variable&quot;&gt;&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;message&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;h4&gt;分支 branch&lt;/h4&gt;
+&lt;p&gt;branch 也是commit的引用，和tag不同的是，branch指向的commit会随着提交更新&lt;/p&gt;
+&lt;h3&gt;Tips&lt;/h3&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;如果有人在本地误操作将某条分支删除，并且没有推送到远程仓库，如何恢复&lt;/p&gt;
+&lt;p&gt;注意到，分支只是commit的一个引用，只要commit没有被删除，提交内容都可以恢复 ，具体操作 如下&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;&lt;span class=&quot;token comment&quot;&gt;## 列出所有分支的提交记录，找到被删除分支的commit&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;git&lt;/span&gt; relog 
+&lt;span class=&quot;token comment&quot;&gt;## 签出恢复&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;git&lt;/span&gt; checkout &lt;span class=&quot;token variable&quot;&gt;&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;找到的commit&lt;span class=&quot;token variable&quot;&gt;`&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;/li&gt;
+&lt;li&gt;列出所有已经合入到 master 的分支&lt;code class=&quot;language-text&quot;&gt;git branch —merged master&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;列出所有没有合入到 master 的分支 &lt;code class=&quot;language-text&quot;&gt;git branch --no-merged maste&lt;/code&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h5&gt;参考&lt;/h5&gt;
+&lt;p&gt;&lt;a href=&quot;https://git-scm.com/book/zh/v2/Git-%E5%86%85%E9%83%A8%E5%8E%9F%E7%90%86-Git-%E5%AF%B9%E8%B1%A1&quot;&gt;Git-内部原理-对象&lt;/a&gt;&lt;/p&gt;</content:encoded></item><item><title><![CDATA[worker 在浏览器中的作用]]></title><description><![CDATA[worker javascript 是单线程的，意味着任务只能分时排队进行，在进程UI计算的时候，js线程只能等待，不能做其它的事情，web worker的出现是为了支持web多线程运行，在做高负担计算的同时，也不会影响到主线程UI交互的流畅性。 worker…]]></description><link>https://feikerwu.github.io/blog/worker/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/worker/</guid><pubDate>Tue, 10 Dec 2019 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;worker&lt;/h1&gt;
+&lt;p&gt;javascript 是单线程的，意味着任务只能分时排队进行，在进程UI计算的时候，js线程只能等待，不能做其它的事情，web worker的出现是为了支持web多线程运行，在做高负担计算的同时，也不会影响到主线程UI交互的流畅性。&lt;/p&gt;
+&lt;p&gt;worker线程可以理解为是主线程的打工小弟，主线程可以把任务派发给worker，worker通过计算之后，把计算的结果回传给主线程。&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;https://davidea.st/assets/articles/2018-05-31-comlink-simple-web-worker/worker-post-message.gif&quot;&gt;&lt;/p&gt;
+&lt;p&gt;相比主线程，worker线程有以下限制&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;同源限制，worker 脚本地址需要和主线程脚本同域&lt;/li&gt;
+&lt;li&gt;DOM 限制，worker 获取不了除了navigator和location之外的dom对象&lt;/li&gt;
+&lt;li&gt;通信限制，worker 线程和主线程不能直接通信，需要通过消息传递完成&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3&gt;使用&lt;/h3&gt;
+&lt;p&gt;主线程和worker线程通过message进行消息传递&lt;/p&gt;
+&lt;p&gt;主线程监听message事件，并向worker传递消息，注意消息可以是string，blob等各种内容&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;javascript&quot;&gt;&lt;pre class=&quot;language-javascript&quot;&gt;&lt;code class=&quot;language-javascript&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; worker &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;new&lt;/span&gt; &lt;span class=&quot;token class-name&quot;&gt;Worker&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;./worker.js&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+
+worker&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;addEventListener&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;message&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token parameter&quot;&gt;e&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  console&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;log&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;get message from worker: &apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; e&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;data&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+
+worker&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;postMessage&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;hello world&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;同理，worker 线程监听message事件来获取消息，postMessage发送消息&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;javascript&quot;&gt;&lt;pre class=&quot;language-javascript&quot;&gt;&lt;code class=&quot;language-javascript&quot;&gt;self&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;addEventListener&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;message&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token parameter&quot;&gt;e&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  console&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;log&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;[worker] get message&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; e&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+  self&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;postMessage&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;postMessage to main&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;</content:encoded></item><item><title><![CDATA[traceroute 实现原理]]></title><description><![CDATA[traceroute 作用 traceroute 常用于网络排错，网络中，主机和主机通信会通过很多个 ip 节点，如果某个 ip 节点出现问题，可以通过 traceroute 去定位具体的 ip 节点 实现原理 traceroute 通过发送 UDP 包，在网络层 IP…]]></description><link>https://feikerwu.github.io/blog/traceroute/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/traceroute/</guid><pubDate>Fri, 06 Dec 2019 00:00:00 GMT</pubDate><content:encoded>&lt;h4&gt;traceroute 作用&lt;/h4&gt;
+&lt;p&gt;traceroute 常用于网络排错，网络中，主机和主机通信会通过很多个 ip 节点，如果某个 ip 节点出现问题，可以通过 traceroute 去定位具体的 ip 节点&lt;/p&gt;
+&lt;h4&gt;实现原理&lt;/h4&gt;
+&lt;p&gt;traceroute 通过发送 UDP 包，在网络层 IP 数据包的头图修改 TTL，TTL 分别设置为 1，2，3，。。64，TTL 在每次经过一个节点的时候都会减 1，当 TTL === 0 的时候，机器会通过 ICMP(internet-control-message-protocol) 协议向源主机发送报错消息。&lt;/p&gt;
+&lt;p&gt;traceroute 通过这种方法来定位问题 ip&lt;/p&gt;</content:encoded></item><item><title><![CDATA[实现一个debounce的装饰器]]></title><description><![CDATA[如何实现一个debounce装饰器 debounce debounce(去抖动)，是前端开发中常用的高阶函数，用于控制函数调用的频次，用例有控制按钮点击次数，控制浏览器resize触发频次等 实现一个简单的debounce…]]></description><link>https://feikerwu.github.io/blog/debounce装饰器/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/debounce装饰器/</guid><pubDate>Tue, 26 Nov 2019 00:00:00 GMT</pubDate><content:encoded>&lt;h3&gt;如何实现一个debounce装饰器&lt;/h3&gt;
+&lt;h4&gt;debounce&lt;/h4&gt;
+&lt;p&gt;debounce(去抖动)，是前端开发中常用的高阶函数，用于控制函数调用的频次，用例有控制按钮点击次数，控制浏览器resize触发频次等&lt;/p&gt;
+&lt;p&gt;实现一个简单的debounce&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;typescript&quot;&gt;&lt;pre class=&quot;language-typescript&quot;&gt;&lt;code class=&quot;language-typescript&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;function&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;debounce&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;fn&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;Function&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; delay&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;number&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;|&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;string&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; timer &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;null&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;&lt;span class=&quot;token operator&quot;&gt;...&lt;/span&gt;args&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;timer&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      &lt;span class=&quot;token function&quot;&gt;clearTimeout&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;timer&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+      timer &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;null&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+    timer &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;setTimeout&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;fn&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;...&lt;/span&gt;args&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; delay&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;h4&gt;装饰器&lt;/h4&gt;
+&lt;p&gt;装饰器本质上也是一个函数，它可以让其它函数或者类在不做代码修改的情况下添加额外的功能，装饰器的返回值也是函数/类。有了装饰器，我们可以将与函数功能
+无关的代码抽离到装饰器并复用。&lt;/p&gt;
+&lt;p&gt;举个例子，我们希望每个函数在被调用的时候都打印一下调用自身的日志，我们可以这样做&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;typescript&quot;&gt;&lt;pre class=&quot;language-typescript&quot;&gt;&lt;code class=&quot;language-typescript&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;function&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;log&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+    target&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; Object&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    propertyKey&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;string&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    propertyDesciptor&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; PropertyDescriptor
+  &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token parameter&quot;&gt;&lt;span class=&quot;token builtin&quot;&gt;any&lt;/span&gt;&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; method &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; propertyDesciptor&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;value&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+
+    propertyDesciptor&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function-variable function&quot;&gt;value&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;&lt;span class=&quot;token operator&quot;&gt;...&lt;/span&gt;args&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      &lt;span class=&quot;token builtin&quot;&gt;console&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;log&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token template-string&quot;&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;&lt;span class=&quot;token keyword&quot;&gt;new&lt;/span&gt; &lt;span class=&quot;token class-name&quot;&gt;Date&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;]: &lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;propertyKey&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt; has been called&lt;/span&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+      &lt;span class=&quot;token builtin&quot;&gt;console&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;log&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token template-string&quot;&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;arguments: &lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;args&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+      &lt;span class=&quot;token function&quot;&gt;method&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;...&lt;/span&gt;args&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; propertyDesciptor&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;class&lt;/span&gt; &lt;span class=&quot;token class-name&quot;&gt;A&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  @&lt;span class=&quot;token function&quot;&gt;log&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+  &lt;span class=&quot;token function&quot;&gt;say&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;message&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;any&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    &lt;span class=&quot;token builtin&quot;&gt;console&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;log&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;message&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; a &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;new&lt;/span&gt; &lt;span class=&quot;token class-name&quot;&gt;A&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+a&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;say&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;hello&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;将会输出以下内容
+&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto;  max-width: 590px;&quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/blog/static/98212435c358d6a4146c512a67e71106/50151/log-output.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 35.809806835066865%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAHCAYAAAAIy204AAAACXBIWXMAAAsSAAALEgHS3X78AAABK0lEQVQoz52Oy2rCUBRF8wuah5qY91XRgi1RmvhAk4hGi1X7+x0XWmihGRQKBu/uiYZi24l0sO6+g7MXW4iX2894tc3C5S6Lk102W/2Hhz0lyPUk0JONwwSj4RDeaIBuL8D1D/yC4Cz/wMdRkgtfhCjZZJ4XoMdUrrarvCTLXJQIWTkiFYhnKeY3RFk+3ZVE8dD1fMTJ5kUI5+vs6qYPVXO4Y3Tg6jaaugWm6XC0Osy6DWY6aNDfMFzohg1dd2EUmAaDplk8d5DrKNx3uh5nZpu7VofXanWuqSZXlOr3ut8rJaVCWTklURalAzkwna+fhXCx5v1gArfZhsWasNwC1oJ9CY0WHOr2B9N84asQLe7fJrO7dDidp/44JqLUH0Xp7YXkHeq+k+ODXI9fI7/WQhTN13AAAAAASUVORK5CYII=&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;log output&quot;
+        title=&quot;log output&quot;
+        src=&quot;/blog/static/98212435c358d6a4146c512a67e71106/b9e4f/log-output.png&quot;
+        srcset=&quot;/blog/static/98212435c358d6a4146c512a67e71106/cf440/log-output.png 148w,
+/blog/static/98212435c358d6a4146c512a67e71106/d2d38/log-output.png 295w,
+/blog/static/98212435c358d6a4146c512a67e71106/b9e4f/log-output.png 590w,
+/blog/static/98212435c358d6a4146c512a67e71106/f9b6a/log-output.png 885w,
+/blog/static/98212435c358d6a4146c512a67e71106/2d849/log-output.png 1180w,
+/blog/static/98212435c358d6a4146c512a67e71106/50151/log-output.png 1346w&quot;
+        sizes=&quot;(max-width: 590px) 100vw, 590px&quot;
+        loading=&quot;lazy&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;h5&gt;写一个debounce的装饰器&lt;/h5&gt;
+&lt;p&gt;基于以上，很方便的就可以写个debounce的装饰器，代码如下&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;typescript&quot;&gt;&lt;pre class=&quot;language-typescript&quot;&gt;&lt;code class=&quot;language-typescript&quot;&gt;&lt;span class=&quot;token comment&quot;&gt;/**
+ * 装饰器的debounce
+ * @param delay
+ */&lt;/span&gt;
+&lt;span class=&quot;token keyword&quot;&gt;export&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;function&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;debounce&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;delay&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;number&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;Function&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;
+    &lt;span class=&quot;token parameter&quot;&gt;target&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; Object&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    propertyKey&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;string&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt;
+    propertyDesciptor&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; PropertyDescriptor&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; method &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; propertyDesciptor&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;value&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; timer &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;null&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    propertyDesciptor&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function-variable function&quot;&gt;value&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;&lt;span class=&quot;token operator&quot;&gt;...&lt;/span&gt;args&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      &lt;span class=&quot;token keyword&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;timer&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+        &lt;span class=&quot;token function&quot;&gt;clearTimeout&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;timer&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+        timer &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;null&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+      &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+      timer &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;setTimeout&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;method&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token operator&quot;&gt;...&lt;/span&gt;args&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; delay&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; propertyDesciptor&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;写个单元测试验证下装饰器是否有效&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;debounced function 应该在自定delay时间后被执行&lt;/li&gt;
+&lt;li&gt;如果在delay时间被再次调用，那么它不应该被执行&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;单元测试代码如下&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;typescript&quot;&gt;&lt;pre class=&quot;language-typescript&quot;&gt;&lt;code class=&quot;language-typescript&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;import&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt; debounce &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;from&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;./index&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+
+jest&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;useFakeTimers&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+
+&lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; a&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token builtin&quot;&gt;any&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; mockFunc&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; jest&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;Mock&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;beforeEach&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  mockFunc &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; jest&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;fn&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;class&lt;/span&gt; &lt;span class=&quot;token class-name&quot;&gt;Test&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    @&lt;span class=&quot;token function&quot;&gt;debounce&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1000&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+    &lt;span class=&quot;token function&quot;&gt;sayHi&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      &lt;span class=&quot;token function&quot;&gt;mockFunc&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+  a &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;new&lt;/span&gt; &lt;span class=&quot;token class-name&quot;&gt;Test&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+
+&lt;span class=&quot;token function&quot;&gt;describe&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;debounce:&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  &lt;span class=&quot;token function&quot;&gt;test&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;debounced function should be called after the delay time&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    a&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;sayHi&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token function&quot;&gt;expect&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;mockFunc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;toHaveBeenCalledTimes&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    jest&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;advanceTimersByTime&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1000&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token function&quot;&gt;expect&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;mockFunc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;toHaveBeenCalledTimes&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+
+  &lt;span class=&quot;token function&quot;&gt;test&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&apos;debounced function should not be called before the delay time&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    a&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;sayHi&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token function&quot;&gt;expect&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;mockFunc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;toHaveBeenCalledTimes&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; count &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;100&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;while&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;count&lt;span class=&quot;token operator&quot;&gt;--&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      a&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;sayHi&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+    &lt;span class=&quot;token function&quot;&gt;expect&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;mockFunc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;toHaveBeenCalledTimes&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+
+    count &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token number&quot;&gt;100&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;while&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;count&lt;span class=&quot;token operator&quot;&gt;--&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+      jest&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;advanceTimersByTime&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;999&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+      a&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;sayHi&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+    &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+    &lt;span class=&quot;token function&quot;&gt;expect&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;mockFunc&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;toHaveBeenCalledTimes&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token number&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;测试代码输出以下内容，验证通过&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto;  max-width: 590px;&quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/blog/static/d36f9638830d547f88f66bd29f6b9dbd/2cf95/unit-test.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 48.18523153942428%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAKCAYAAAC0VX7mAAAACXBIWXMAAAsSAAALEgHS3X78AAABhElEQVQoz5WR+U6DQBDGeQMtUOjFDcvVUzRW03qUao941Pd/lCb7ObvQ2hhN9I9f5tvZnW+GQVlsdvvH9ce+XO/25ZYinf/Lsq5brN/3ynQ6x2UxRDIegaUDsKwizod/RryfzkuUm3coeZJzFrS52jO43iQMg2sUG5rGz1WVOI3ftcZVXedn5w0+mFzxxeqNK36cIbA9DKIEcZIiihMEEUPPdtC1bMlvWmC02qAB0B9f4uH5FYpPRqZpIs/7SLMcIYslcZohqc+MGrG62akWWI4rDfNRQYYvUGJGl9TFbXdgUce0P4DrB/WUNhqaLgsEumEe9YGm2YKqNyvDJzJMkxxj6uL2LGk0KQo5WUbGYroO5dvdnqTV6f6om+ILD4YsyeD5LgIq9sNImojPcDxfTih2dtwbmR9yQouceEs/EtnwotqhWKbjhXADBsePiBCWG0hsj3BrhKZ3IlZ34TEn6orrWWU4Lze4uVvierY4Mp1XSD370qf3X7rE7f0T7pZbPK7e8AkmFCfr4vLsQAAAAABJRU5ErkJggg==&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;unit test&quot;
+        title=&quot;unit test&quot;
+        src=&quot;/blog/static/d36f9638830d547f88f66bd29f6b9dbd/b9e4f/unit-test.png&quot;
+        srcset=&quot;/blog/static/d36f9638830d547f88f66bd29f6b9dbd/cf440/unit-test.png 148w,
+/blog/static/d36f9638830d547f88f66bd29f6b9dbd/d2d38/unit-test.png 295w,
+/blog/static/d36f9638830d547f88f66bd29f6b9dbd/b9e4f/unit-test.png 590w,
+/blog/static/d36f9638830d547f88f66bd29f6b9dbd/f9b6a/unit-test.png 885w,
+/blog/static/d36f9638830d547f88f66bd29f6b9dbd/2d849/unit-test.png 1180w,
+/blog/static/d36f9638830d547f88f66bd29f6b9dbd/2cf95/unit-test.png 1598w&quot;
+        sizes=&quot;(max-width: 590px) 100vw, 590px&quot;
+        loading=&quot;lazy&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;h5&gt;&lt;a href=&quot;https://github.com/feikerwu/debounce-decorator&quot;&gt;代码地址&lt;/a&gt;&lt;/h5&gt;</content:encoded></item><item><title><![CDATA[前后端分离下的cas]]></title><description><![CDATA[什么是单点登录 如何做单点登录 demo实践]]></description><link>https://feikerwu.github.io/blog/jwt鉴权/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/jwt鉴权/</guid><pubDate>Sat, 23 Nov 2019 00:00:00 GMT</pubDate><content:encoded>&lt;h3&gt;什么是单点登录&lt;/h3&gt;
+&lt;h3&gt;如何做单点登录&lt;/h3&gt;
+&lt;h3&gt;demo实践&lt;/h3&gt;</content:encoded></item><item><title><![CDATA[tcp三次握手]]></title><description><![CDATA[TCP 三次握手为什么是 3 次而不是 2 次或者 4 次 TCP 协议是什么，为什么需要 TCP 要搞懂为什么是三次握手，首先得搞懂什么是 TCP 协议，为什么网络协议中需要 TCP 协议。 传输控制协议（英语：Transmission Control Protocol…]]></description><link>https://feikerwu.github.io/blog/TCP连接/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/TCP连接/</guid><pubDate>Thu, 21 Nov 2019 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;TCP 三次握手为什么是 3 次而不是 2 次或者 4 次&lt;/h2&gt;
+&lt;h3&gt;TCP 协议是什么，为什么需要 TCP&lt;/h3&gt;
+&lt;p&gt;要搞懂为什么是三次握手，首先得搞懂什么是 TCP 协议，为什么网络协议中需要 TCP 协议。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;传输控制协议&lt;/strong&gt;（英语：&lt;strong&gt;T&lt;/strong&gt;ransmission &lt;strong&gt;C&lt;/strong&gt;ontrol &lt;strong&gt;P&lt;/strong&gt;rotocol，缩写：&lt;strong&gt;TCP&lt;/strong&gt;）是一种面向连接的、可靠的、基于&lt;a href=&quot;https://zh.wikipedia.org/wiki/%E5%AD%97%E7%AF%80%E6%B5%81&quot;&gt;字节流&lt;/a&gt;的&lt;a href=&quot;https://zh.wikipedia.org/wiki/%E4%BC%A0%E8%BE%93%E5%B1%82&quot;&gt;传输层&lt;/a&gt;通信协议，由&lt;a href=&quot;https://zh.wikipedia.org/wiki/IETF&quot;&gt;IETF&lt;/a&gt;的&lt;a href=&quot;https://zh.wikipedia.org/wiki/RFC&quot;&gt;RFC&lt;/a&gt; &lt;a href=&quot;https://tools.ietf.org/html/rfc793&quot;&gt;793&lt;/a&gt;定义。在简化的计算机网络&lt;a href=&quot;https://zh.wikipedia.org/wiki/OSI%E6%A8%A1%E5%9E%8B&quot;&gt;OSI 模型&lt;/a&gt;中，它完成第四层传输层所指定的功能。&lt;a href=&quot;https://zh.wikipedia.org/wiki/%E7%94%A8%E6%88%B7%E6%95%B0%E6%8D%AE%E6%8A%A5%E5%8D%8F%E8%AE%AE&quot;&gt;用户数据报协议&lt;/a&gt;（UDP）是同一层内另一个重要的传输协议。&lt;/p&gt;
+&lt;p&gt;在网络协议中，TCP 位与 IP 层之上，应用层之下，与 UDP 不同的是，TCP 需要保证在数据传输过程中不丢失，以及数据到达之后精确，可靠，而不是被篡改。&lt;/p&gt;
+&lt;p&gt;注意这里，数据的可靠与精确，这个是 TCP 协议需要保证的最基本功能。&lt;/p&gt;
+&lt;h3&gt;TCP 三次握手的具体流程&lt;/h3&gt;
+&lt;p&gt;TCP 协议的运行可划分为三个阶段：连接创建(&lt;em&gt;connection establishment&lt;/em&gt;)、数据传送（&lt;em&gt;data transfer&lt;/em&gt;）和连接终止（&lt;em&gt;connection termination&lt;/em&gt;）&lt;/p&gt;
+&lt;p&gt;我们说的 TCP 三次握手是 TCP 客户端和服务端连接创建时候的工作。&lt;/p&gt;
+&lt;p&gt;以下是 TCP 连接的具体流程，&lt;/p&gt;
+&lt;p&gt;&lt;span
+      class=&quot;gatsby-resp-image-wrapper&quot;
+      style=&quot;position: relative; display: block; margin-left: auto; margin-right: auto;  max-width: 590px;&quot;
+    &gt;
+      &lt;a
+    class=&quot;gatsby-resp-image-link&quot;
+    href=&quot;/blog/static/78497aa3a48de28d29a88d46b92e496b/1478c/tcp.png&quot;
+    style=&quot;display: block&quot;
+    target=&quot;_blank&quot;
+    rel=&quot;noopener&quot;
+  &gt;
+    &lt;span
+    class=&quot;gatsby-resp-image-background-image&quot;
+    style=&quot;padding-bottom: 63.96396396396396%; position: relative; bottom: 0; left: 0; background-image: url(&apos;data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAANCAIAAAAmMtkJAAAACXBIWXMAAA9hAAAPYQGoP6dpAAACVUlEQVQoz01SaXOiQBT0//+JzcdNVaJxc5QohxpBEAQcjgEEwWCIJWoCVBKNHPvU3VS6qGF4Q8/0dL9aWVb73W4kCGG4OOT5fr8viqL6gbIsv76+yrKIomdJktbrDRTzPC+KvEbTNElSoiiqqmpirOt6EATfNBg3mw1wTNNUVYXneYqiu91er9ffbre1ev3q/v7WtrHruo7j2LYNk5/k1WoFxeVyGUVRGIYMTTfq1xRJZFla47jeRJU0bQLbK4oylmXXm/4kr9fru9tbkiTb7bZlWYoidnsdVRXTNK3BN0hiWbbVasEfBEFomp3nVZpky5f4dHJMU9Tj46MgCEHgi7RJXY9ExkiTpMbzEkIGNjHw+eFwNBLUiZNllePEoni8fBzHg8HAMAyQpuuGoWk8x2JTP8q+uGhd/mbAJ4TQkOP6/b5lYXDycMjfko+3pJKkVbPZBFEgTdM0P/A1XYuWL1mW1RBSbAcH8wDMUmQZbLQcDAfOrHDMGtW+mltxp90esCxYPEGIaPSufj0QDSYB2VjHwSzAJ4DXU3dqo9n+tdo+7ePgo9iBYTGkOJvNplMXUkQqEjgBxB8Na3NEV+pyQ5YbDps3N3cPdzzjfKTVW5KEi+XZ7Xr9utPpyLLseR7I1k09fF4cZTfYyz/cleUYT/Mn5wTsuJ+7yp1ux+PFOefJZBJ8w/WRghbzEzkKIfvoVPbn8zm8PO9fkxzy8v29ksQ12SEhJ47jPNdjVOZm0OiqzNFtbGF4LNuyT4Cb+77/v0mKs2xonvMSjBRP3A8aFP/w+rr9C4dcm3aPuunxAAAAAElFTkSuQmCC&apos;); background-size: cover; display: block;&quot;
+  &gt;&lt;/span&gt;
+  &lt;img
+        class=&quot;gatsby-resp-image-image&quot;
+        alt=&quot;tcp&quot;
+        title=&quot;tcp&quot;
+        src=&quot;/blog/static/78497aa3a48de28d29a88d46b92e496b/b9e4f/tcp.png&quot;
+        srcset=&quot;/blog/static/78497aa3a48de28d29a88d46b92e496b/cf440/tcp.png 148w,
+/blog/static/78497aa3a48de28d29a88d46b92e496b/d2d38/tcp.png 295w,
+/blog/static/78497aa3a48de28d29a88d46b92e496b/b9e4f/tcp.png 590w,
+/blog/static/78497aa3a48de28d29a88d46b92e496b/1478c/tcp.png 666w&quot;
+        sizes=&quot;(max-width: 590px) 100vw, 590px&quot;
+        loading=&quot;lazy&quot;
+      /&gt;
+  &lt;/a&gt;
+    &lt;/span&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;客户端 client 向服务端 server 发送一个 SYN(synchronize)报，包上带随机序号 A&lt;/li&gt;
+&lt;li&gt;server 接收到 client 的 SYN 初始化包之后，回复一个 SYN/ACK 包，ACK 包上带上序号 A+1，表示我正确收到了这个客户端 client 的消息，同时自己的 SYN 上带上随机序号 B&lt;/li&gt;
+&lt;li&gt;client 收到 server 的 SYN/ACK 包后，回复一个 ACK 包，带上序号 B+1，告诉客户端我们我正确接收到你的请求&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;了解以上流程之后，我们再来回答为什么是 3 次，而不是 2 次或者 4 次。&lt;/p&gt;
+&lt;h5&gt;为什么不是 2 次&lt;/h5&gt;
+&lt;p&gt;如果只有 2 次，那么能做的只有&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;client 向 server 发送一个连接请求，SYN 带上随机数 A&lt;/li&gt;
+&lt;li&gt;server 回复 ACK/SYN，ACK 带上 A+1，SYN 带上自己的随机数 B&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;以上保证了 client 向 server 发送请求的准确性，如果 server 发送的 ACK/SYN 包丢失，那么 server 向 client 发送消息的初始序号 B 就无法同步&lt;/p&gt;
+&lt;h5&gt;为什么不是 4 次&lt;/h5&gt;
+&lt;p&gt;以上第二次的 ACK/SYN 包可以被拆分成两个 ACK 包和 SYN 包两次发送，但是没必要，就比如以下对话&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;how are you&lt;/li&gt;
+&lt;li&gt;I’m fine, thanks, and you?&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;I’m fine 的回应和 and you 完全可以放到同一个消息里，没必要拆分。&lt;/p&gt;
+&lt;h4&gt;参考&lt;/h4&gt;
+&lt;p&gt;&lt;a href=&quot;https://zh.wikipedia.org/wiki/%E4%BC%A0%E8%BE%93%E6%8E%A7%E5%88%B6%E5%8D%8F%E8%AE%AE&quot;&gt;维基百科: TCP&lt;/a&gt;
+&lt;a href=&quot;https://www.zhihu.com/question/24853633&quot;&gt;知乎: TCP 为什么是三次握手，而不是两次或者四次&lt;/a&gt;&lt;/p&gt;</content:encoded></item><item><title><![CDATA[the art of cammand line]]></title><description><![CDATA[鉴于最近在服务器上操作比较多，之前对命令行一直是似懂非懂，所以趁此机会重学一下命令行，在 github 上找到一个 6w 多 star 的库，the art of cammand line, 这里做一下阅读笔记 tips  可以在 bash…]]></description><link>https://feikerwu.github.io/blog/the-art-of-command-line/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/the-art-of-command-line/</guid><pubDate>Thu, 21 Nov 2019 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;鉴于最近在服务器上操作比较多，之前对命令行一直是似懂非懂，所以趁此机会重学一下命令行，在 github 上找到一个 6w 多 star 的库，&lt;a href=&quot;https://github.com/jlevy/the-art-of-command-line&quot;&gt;the art of cammand line&lt;/a&gt;, 这里做一下阅读笔记&lt;/p&gt;
+&lt;h4&gt;tips&lt;/h4&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code class=&quot;language-text&quot;&gt;ctrl + r&lt;/code&gt; 可以在 bash 搜索脚本执行的历史记录&lt;/li&gt;
+&lt;li&gt;&lt;code class=&quot;language-text&quot;&gt;ctrl + l&lt;/code&gt; 清屏，类似与 clear&lt;/li&gt;
+&lt;li&gt;&lt;code class=&quot;language-text&quot;&gt;man readline&lt;/code&gt; 查看命令行的快捷键(osx 内不行)&lt;/li&gt;
+&lt;li&gt;&lt;code class=&quot;language-text&quot;&gt;cd -&lt;/code&gt; 回到前一个工作路径&lt;/li&gt;
+&lt;li&gt;&lt;code class=&quot;language-text&quot;&gt;!!&lt;/code&gt; 执行上一个命令&lt;/li&gt;
+&lt;li&gt;在命令的最前面添加#可以将这条命令给注释掉，example, 命令写到一半，通过&lt;code class=&quot;language-text&quot;&gt;ctrl a #&lt;/code&gt;注释命令，下次通过&lt;code class=&quot;language-text&quot;&gt;ctrl + r&lt;/code&gt;进入命令搜索再次执行&lt;/li&gt;
+&lt;li&gt;xargs&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;xargs 标准输入转化为命令行参数，有些命令不支持标准输入，必须得在命令行输入参数，这时候就可以用 xargs 转化&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;xargs 用法
+xargs 使用格式&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;&lt;span class=&quot;token function&quot;&gt;xargs&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;-options&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;[&lt;/span&gt;command&lt;span class=&quot;token punctuation&quot;&gt;]&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;ul&gt;
+&lt;li&gt;tee 用于将标准输出写到文本文件&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;&lt;span class=&quot;token function&quot;&gt;ls&lt;/span&gt; -al &lt;span class=&quot;token operator&quot;&gt;|&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;tee&lt;/span&gt; file.txt &lt;span class=&quot;token comment&quot;&gt;# 将当前的文件信息保存到file.txt文件&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;ul&gt;
+&lt;li&gt;sort 用来对文本排序并将排序内容输出&lt;/li&gt;
+&lt;li&gt;grep 全称(global search regular expression(RE) and print out the line) 全面搜索正则表达式并把行打印出来
+用的比较多的是 &lt;code class=&quot;language-text&quot;&gt;grep -E &amp;#39;reg&amp;#39; file&lt;/code&gt; 在 file 里面去搜索某些正则可以匹配出来的内容&lt;/li&gt;
+&lt;li&gt;du (disk usage) 用于查看当前文件的大小&lt;/li&gt;
+&lt;li&gt;lsof(list open file)打开所有打开的文件&lt;/li&gt;
+&lt;li&gt;type 来查看命令的类型&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4&gt;参考&lt;/h4&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&quot;https://explainshell.com/&quot;&gt;explainshell 一个解释 bash 命令的一个工具&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://github.com/tldr-pages/tldr&quot;&gt;可以替换 man page更简洁的工具&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;</content:encoded></item><item><title><![CDATA[xpath和css selector实现]]></title><description><![CDATA[XPath 即为 XML 路径语言（XML Path Language），它是一种用来确定 XML 文档中某部分位置的计算机语言。 DOM 中的 xpath 通常用作唯一 id，用来标识 dom 元素在页面中的位置，用于以下功能 爬虫 dom 元素定位 可视化埋点 dom…]]></description><link>https://feikerwu.github.io/blog/xpath实现/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/xpath实现/</guid><pubDate>Thu, 21 Nov 2019 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;XPath 即为 XML 路径语言（XML Path Language），它是一种用来确定 XML 文档中某部分位置的计算机语言。&lt;/p&gt;
+&lt;p&gt;DOM 中的 xpath 通常用作唯一 id，用来标识 dom 元素在页面中的位置，用于以下功能&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;爬虫 dom 元素定位&lt;/li&gt;
+&lt;li&gt;可视化埋点 dom 节点标示&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;以下是 xpath 和 css selector 的实现&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;typescript&quot;&gt;&lt;pre class=&quot;language-typescript&quot;&gt;&lt;code class=&quot;language-typescript&quot;&gt;&lt;span class=&quot;token comment&quot;&gt;/**
+ * 获取某个dom的xpath
+ * @param target dom 节点
+ */&lt;/span&gt;
+&lt;span class=&quot;token keyword&quot;&gt;export&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; getDomXPath &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;el&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; HTMLElement&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token parameter&quot;&gt;&lt;span class=&quot;token builtin&quot;&gt;string&lt;/span&gt;&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; curXPath &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;&apos;&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; tagName &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; el&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;tagName&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;toLowerCase&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+  &lt;span class=&quot;token keyword&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;tagName &lt;span class=&quot;token operator&quot;&gt;===&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;body&apos;&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;||&lt;/span&gt; tagName &lt;span class=&quot;token operator&quot;&gt;===&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;html&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; tagName
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+  &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; id &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; el&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;id
+  &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; elIndex &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token class-name&quot;&gt;Array&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;prototype&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;indexOf&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;call&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;el&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;parentElement&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;children&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; el&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+  curXPath &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; id &lt;span class=&quot;token operator&quot;&gt;?&lt;/span&gt; &lt;span class=&quot;token template-string&quot;&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;tagName&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;[@id=&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;id&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token template-string&quot;&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;tagName&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;elIndex&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;/span&gt;
+
+  &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; parentXpath &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;getDomXPath&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;el&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;parentElement&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+  &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; &lt;span class=&quot;token template-string&quot;&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;parentXpath&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;\\&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;curXPath&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;typescript&quot;&gt;&lt;pre class=&quot;language-typescript&quot;&gt;&lt;code class=&quot;language-typescript&quot;&gt;&lt;span class=&quot;token comment&quot;&gt;/**
+ * 获取某个dom的css选择器路径
+ * @param target dom节点
+ */&lt;/span&gt;
+&lt;span class=&quot;token keyword&quot;&gt;export&lt;/span&gt; &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; getDomCssPath &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;el&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; HTMLElement&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token parameter&quot;&gt;&lt;span class=&quot;token builtin&quot;&gt;string&lt;/span&gt;&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; cssPath &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;&apos;&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; tagName &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; el&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;tagName&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;toLowerCase&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+  &lt;span class=&quot;token keyword&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;tagName &lt;span class=&quot;token operator&quot;&gt;===&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;body&apos;&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;||&lt;/span&gt; tagName &lt;span class=&quot;token operator&quot;&gt;===&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;html&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; tagName
+  &lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;
+
+  &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; id &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; el&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;id
+  &lt;span class=&quot;token keyword&quot;&gt;let&lt;/span&gt; elClsList &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token class-name&quot;&gt;Array&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;prototype&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;join&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;call&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;el&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;classList&lt;span class=&quot;token punctuation&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;.&apos;&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+  cssPath &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; id &lt;span class=&quot;token operator&quot;&gt;?&lt;/span&gt; &lt;span class=&quot;token template-string&quot;&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;tagName&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;#&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;id&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token template-string&quot;&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;tagName&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;elClsList&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;/span&gt;
+
+  &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; parentCssPath &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;getDomCssPath&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;el&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;parentElement&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+  &lt;span class=&quot;token keyword&quot;&gt;return&lt;/span&gt; &lt;span class=&quot;token template-string&quot;&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;parentCssPath&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token string&quot;&gt;&gt;&lt;/span&gt;&lt;span class=&quot;token interpolation&quot;&gt;&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;${&lt;/span&gt;cssPath&lt;span class=&quot;token interpolation-punctuation punctuation&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;token template-punctuation string&quot;&gt;`&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;</content:encoded></item><item><title><![CDATA[vue.nextTick 原理解析]]></title><description><![CDATA[Vue.nextTick()有什么作用？实现原理是什么？ vue 开发时，更新响应式数据后，如果想立马拿到 dom 元素做点什么，就需要用到 Vue.nextTick() 那么什么是 nextTick，为什么要用到 nextTick，以及 nextTick…]]></description><link>https://feikerwu.github.io/blog/next-tick/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/next-tick/</guid><pubDate>Wed, 13 Nov 2019 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;Vue.nextTick()有什么作用？实现原理是什么？&lt;/h2&gt;
+&lt;ol&gt;
+&lt;li&gt;vue 开发时，更新响应式数据后，如果想立马拿到 dom 元素做点什么，就需要用到 Vue.nextTick()&lt;/li&gt;
+&lt;li&gt;那么什么是 nextTick，为什么要用到 nextTick，以及 nextTick 是如何实现的&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h4&gt;什么是 nextTick&lt;/h4&gt;
+&lt;p&gt;在 vue 里面，数据更新后，我们是无法立马拿到响应数据更新后的 dom 的，nextTick 就是 vue 的 api，如果想要操作 dom，可以通过这个 api 获取&lt;/p&gt;
+&lt;p&gt;以下是&lt;a href=&quot;https://cn.vuejs.org/v2/api/#Vue-nextTick&quot;&gt;vue 官方文档&lt;/a&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;在下次 DOM 更新循环结束之后执行延迟回调。在修改数据之后立即使用这个方法，获取更新后的 DOM。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h4&gt;为什么需要用到 nextTick&lt;/h4&gt;
+&lt;p&gt;浏览器里面频繁操作 dom 会非常影响性能，某个 dom 的宽高变化可能都会引起整个页面的重排重绘，个人认为，vue 这种框架对开发者来说最重要的有两块，一个是数据绑定，另外一个就是虚拟 dom，这两个都去解决了一个问题，避免开发者直接去操作 dom。&lt;/p&gt;
+&lt;p&gt;vue.nextTick 就是上述背景的一个产物，我们在更改响应式数据的时候，vue 不会检测到一次数据更新，就去更新一下 dom，甚至不会去改 vdom，它会先有一个 diff 的计算，比如有个计数器&lt;code class=&quot;language-text&quot;&gt;count&lt;/code&gt;,如果&lt;code class=&quot;language-text&quot;&gt;count&lt;/code&gt;从 0 加到 1 了，diff 会算出 count 这个值从 0 变为了 1，然后把变化 1 这个结果 patch 到 vdom 上，最后再更新到真实 dom 上，如果
+&lt;code class=&quot;language-text&quot;&gt;count&lt;/code&gt;从 0 加到 1000，同理，diff 只会算出 count 从 0 变到了 1000，然后做一次 patch 操作，并不会做 1000 次。&lt;/p&gt;
+&lt;p&gt;以上过程中，如果 count 多次变化，vue 会把 count 的 watcher 推到一个更新队列里面，在下一个&lt;code class=&quot;language-text&quot;&gt;tick&lt;/code&gt;去计算最终变化后的 count，然后去执行相关的 watcher，这样避免了不必要的性能开销，&lt;code class=&quot;language-text&quot;&gt;nextTick&lt;/code&gt; 就是在 count 所有变化后并更新到 dom 上之后去执行的。&lt;/p&gt;
+&lt;h4&gt;nextTick 实现原理&lt;/h4&gt;
+&lt;p&gt;上述下一个&lt;code class=&quot;language-text&quot;&gt;Tick&lt;/code&gt;其实就是下一次事件循环，所以只要是可以放到下一次事件循环的函数都可以用来实现 nextTick，vue 里面采取了以下策略去实现 nextTick&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;如果浏览器支持 promise，就用 promise.resolve(fn) 来实现&lt;/li&gt;
+&lt;li&gt;否则，如果浏览器支持 MutationObserver，用 MutationObserver&lt;/li&gt;
+&lt;li&gt;如果浏览器支持 setImmediate，用 setImmediate&lt;/li&gt;
+&lt;li&gt;如果上述都不支持，用 setTimeout 兜底&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Vue 2.0 的源码见这 &lt;a href=&quot;https://github.com/vuejs/vue/blob/dev/src/core/util/next-tick.js&quot;&gt;nextTick 源码 &lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;自己实现一个不用 &lt;code class=&quot;language-text&quot;&gt;mutionObserver&lt;/code&gt; 的 &lt;code class=&quot;language-text&quot;&gt;nextTick&lt;/code&gt;&lt;/p&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;js&quot;&gt;&lt;pre class=&quot;language-js&quot;&gt;&lt;code class=&quot;language-js&quot;&gt;&lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; &lt;span class=&quot;token function-variable function&quot;&gt;nextTick&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;token parameter&quot;&gt;cb&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;{&lt;/span&gt;
+  &lt;span class=&quot;token keyword&quot;&gt;const&lt;/span&gt; queueMicrotask &lt;span class=&quot;token operator&quot;&gt;=&lt;/span&gt;
+    &lt;span class=&quot;token keyword&quot;&gt;typeof&lt;/span&gt; queueMicrotask &lt;span class=&quot;token operator&quot;&gt;===&lt;/span&gt; &lt;span class=&quot;token string&quot;&gt;&apos;function&apos;&lt;/span&gt;
+      &lt;span class=&quot;token operator&quot;&gt;?&lt;/span&gt; queueMicrotask
+      &lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; Promise &lt;span class=&quot;token operator&quot;&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;cb&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; Promise&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;resolve&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;token function&quot;&gt;then&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;cb&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+      &lt;span class=&quot;token operator&quot;&gt;?&lt;/span&gt; setImmediate &lt;span class=&quot;token operator&quot;&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;token parameter&quot;&gt;cb&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;setImmediate&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;cb&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+      &lt;span class=&quot;token punctuation&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;token parameter&quot;&gt;cb&lt;/span&gt; &lt;span class=&quot;token operator&quot;&gt;=&gt;&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;setTimout&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;cb&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+
+  &lt;span class=&quot;token function&quot;&gt;queueMicrotask&lt;/span&gt;&lt;span class=&quot;token punctuation&quot;&gt;(&lt;/span&gt;cb&lt;span class=&quot;token punctuation&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;token punctuation&quot;&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;&lt;em&gt;ps: 看了下 vue3 的 &lt;a href=&quot;https://github.com/vuejs/vue-next/blob/555e3be69d39f4b35a312916253d9f38cbcab495/packages/runtime-core/src/scheduler.ts#L10&quot;&gt;nextTick&lt;/a&gt; 好像只用了 promise，可能之后会补充&lt;/em&gt;&lt;/p&gt;</content:encoded></item><item><title><![CDATA[删除文件是否需要写权限]]></title><description><![CDATA[…]]></description><link>https://feikerwu.github.io/blog/delete-file/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/delete-file/</guid><pubDate>Mon, 11 Nov 2019 00:00:00 GMT</pubDate><content:encoded>&lt;h2&gt;每日一题 - 删除文件是否需要对该文件具有写权限，为什么？&lt;/h2&gt;
+&lt;p&gt;删除文件不需要该文件的写权限，需要文件所在目录的写权限以及执行权限。&lt;/p&gt;
+&lt;p&gt;因为删除文件修改的该文件父级即其所在目录的内容，所以需要目录的写权限。
+同时，删除文件先要进入到目录，进入是目录的一个操作，所以需要该目录的执行操作。&lt;/p&gt;
+&lt;h5&gt;bash 验证&lt;/h5&gt;
+&lt;div class=&quot;gatsby-highlight&quot; data-language=&quot;bash&quot;&gt;&lt;pre class=&quot;language-bash&quot;&gt;&lt;code class=&quot;language-bash&quot;&gt;&lt;span class=&quot;token comment&quot;&gt;#新建a目录，a下有b文件&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;mkdir&lt;/span&gt; a &lt;span class=&quot;token operator&quot;&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;touch&lt;/span&gt; a/b
+ &lt;span class=&quot;token comment&quot;&gt;#去掉a的写权限，尝试去删除a/b，报 rm: a/b: Permission denied，说明删除文件需要文件所在目录有写权限&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;chmod&lt;/span&gt; -w a &lt;span class=&quot;token operator&quot;&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;rm&lt;/span&gt; a/b
+&lt;span class=&quot;token comment&quot;&gt;#恢复a写权限，去掉b写权限，尝试去删除b, 删除成功，说明删除文件不需要写权限&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;chmod&lt;/span&gt; +w a &lt;span class=&quot;token operator&quot;&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;chmod&lt;/span&gt; -w a/b &lt;span class=&quot;token operator&quot;&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;rm&lt;/span&gt; a/b
+&lt;span class=&quot;token comment&quot;&gt;#去掉a的执行权限 报rm: a/b: Permission denied，说明删除文件需要目录的执行权限&lt;/span&gt;
+&lt;span class=&quot;token function&quot;&gt;touch&lt;/span&gt; b &lt;span class=&quot;token operator&quot;&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;chmod&lt;/span&gt; -x a &lt;span class=&quot;token operator&quot;&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class=&quot;token function&quot;&gt;rm&lt;/span&gt; a/b&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;</content:encoded></item><item><title><![CDATA[hello world]]></title><description><![CDATA[hello world]]></description><link>https://feikerwu.github.io/blog/hello-world/</link><guid isPermaLink="false">https://feikerwu.github.io/blog/hello-world/</guid><pubDate>Mon, 11 Nov 2019 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;hello world&lt;/p&gt;</content:encoded></item></channel></rss>
