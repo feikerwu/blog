@@ -80,7 +80,7 @@ git cat-file -p master^{tree}
 + commit message
 + 当前commit的上一次提交，如果是merge操作，可能会有多个parent commit
 
-git 会根据以上信息计算一个sha1，作为commit的唯一key 
+git 会根据以上信息计算一个sha1，作为commit的唯一key
 
 ![image-20191213162249523](assets/image-20191213162249523.png)
 
@@ -122,7 +122,7 @@ init
 
 
 
-###  references 
+###  references
 
 head, 标签以及分支都只是一个commit的引用，或者别名。引用信息存储在 `.git/refs` 文件夹下
 
@@ -134,9 +134,9 @@ tree .git/refs
 │   └── test
 └── tags
     └── tag-1
-    
 
-git log --oneline 
+
+git log --oneline
 9ea265b (HEAD -> master, tag: tag-1, test) init
 
 # 查看文件内容
@@ -180,7 +180,7 @@ branch 也是commit的引用，和tag不同的是，branch指向的commit会随�
 
    ```bash
    ## 列出所有分支的提交记录，找到被删除分支的commit
-   git relog 
+   git relog
    ## 签出恢复
    git checkout `找到的commit`
    ```
@@ -188,6 +188,10 @@ branch 也是commit的引用，和tag不同的是，branch指向的commit会随�
 2. 列出所有已经合入到 master 的分支` git branch —merged master`
 
 3. 列出所有没有合入到 master 的分支 `git branch --no-merged maste`
+
+4. 查看某个文件每一行的所有操作记录 `git blame ${filename}`
+
+5. `git cherry-pick commitId[s]`，挑好看的樱桃，相对比于直接merge，cherry-pick可以只挑选部分commit到当前分支内容
 
 
 
