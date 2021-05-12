@@ -26,7 +26,7 @@
     "gatsby-transformer-remark": "^2.6.32",
     "gatsby-transformer-sharp": "^2.3.2",
     "gh-pages": "^2.1.1",
-    "postcss": "^7.0.21",
+    "postcss": "^8.2.10",
     "postcss-typography": "^1.0.0",
     "prismjs": "^1.17.1",
     "react": "^16.11.0",
